@@ -145,6 +145,14 @@ func (d *Delayer) IsDelayed(key string) bool {
 	return d.activeDelays[key]
 }
 
+func createCookie(r *http.Request, value string) *http.Cookie {
+	return &http.Cookie{
+		Name:  kCookieName,
+		Value: value,
+		Path:  "/",
+	}
+}
+
 type dnsAdminServer struct {
 	r       *mux.Router
 	user    *userHandler
@@ -255,6 +263,9 @@ func (s *dnsAdminServer) decodeBody(w http.ResponseWriter, r *http.Request, body
 }
 
 func (s *dnsAdminServer) StatusHandler(w http.ResponseWriter, r *http.Request) {
+	if user, _ := s.user.Authenticate(r); user != nil {
+		w.Header().Set("X-dnsadmin-username", user.GetUsername())
+	}
 	s.returnSuccess(w, http.StatusOK, "ok")
 }
 
@@ -293,8 +304,15 @@ func (s *dnsAdminServer) LoginHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Printf("User %s logged in from %s", user.GetUsername(), remote)
-	s.user.SetCookie(w, user)
+	s.user.SetCookie(w, r, user)
 	s.returnSuccess(w, http.StatusOK, "login_success")
+}
+
+func (s *dnsAdminServer) LogoutHandler(w http.ResponseWriter, r *http.Request) {
+	cookie := createCookie(r, "")
+	cookie.MaxAge = -1
+	http.SetCookie(w, cookie)
+	s.returnSuccess(w, http.StatusOK, "logout_success")
 }
 
 func (s *dnsAdminServer) authenticateHandler(handler func(*user, http.ResponseWriter, *http.Request)) http.HandlerFunc {
@@ -312,6 +330,7 @@ func (s *dnsAdminServer) authenticateHandler(handler func(*user, http.ResponseWr
 			return
 		}
 
+		w.Header().Set("X-DNS-Admin-Username", user.GetUsername())
 		handler(user, w, r)
 	}
 }
@@ -337,7 +356,7 @@ func (s *dnsAdminServer) ChangePasswordHandler(user *user, w http.ResponseWriter
 	}
 
 	log.Printf("User %s changed his password from %s", user.GetUsername(), s.getRemoteAddress(r))
-	s.user.SetCookie(w, user)
+	s.user.SetCookie(w, r, user)
 	s.returnSuccess(w, http.StatusOK, "change_success")
 }
 
@@ -436,9 +455,11 @@ func NewDnsAdminServer(root string) (*dnsAdminServer, error) {
 	s := server.r.PathPrefix("/api/v1").Subrouter()
 	s.HandleFunc("/status", server.StatusHandler)
 	s.HandleFunc("/user/login", server.LoginHandler).Methods("POST")
+	s.HandleFunc("/user/logout", server.LogoutHandler).Methods("GET")
 	s.HandleFunc("/user/change-password", server.authenticateHandler(server.ChangePasswordHandler)).Methods("POST")
 	s.HandleFunc("/domain/list", server.authenticateHandler(server.ListDomainsHandler)).Methods("GET")
 	s.HandleFunc("/slave/{domain}", server.authenticateHandler(server.AddSlaveHandler)).Methods("PUT")
 	s.HandleFunc("/slave/{domain}", server.authenticateHandler(server.DeleteSlaveHandler)).Methods("DELETE")
+
 	return server, nil
 }

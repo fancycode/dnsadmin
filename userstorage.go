@@ -177,18 +177,13 @@ func (u *userHandler) doStore() error {
 	return nil
 }
 
-func (u *userHandler) SetCookie(w http.ResponseWriter, user *user) {
+func (u *userHandler) SetCookie(w http.ResponseWriter, r *http.Request, user *user) {
 	value := map[string]string{
 		kUsernameKey: user.GetUsername(),
 	}
 
 	if encoded, err := u.c.Encode(kCookieName, value); err == nil {
-		cookie := &http.Cookie{
-			Name:  kCookieName,
-			Value: encoded,
-			Path:  "/",
-		}
-
+		cookie := createCookie(r, encoded)
 		http.SetCookie(w, cookie)
 	}
 }
