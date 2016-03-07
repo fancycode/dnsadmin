@@ -40,7 +40,7 @@ Response:
 - Sets a cookie that must be sent with all further requests.
 
 
-### POST /user/logout
+### GET /user/logout
 
 Remove authentication stored for user.
 
