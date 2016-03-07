@@ -444,7 +444,7 @@ func (s *dnsAdminServer) Run(addr string) error {
 	return http.ListenAndServe(addr, s.r)
 }
 
-func NewDnsAdminServer(root string) (*dnsAdminServer, error) {
+func NewDnsAdminServer(dataRoot string, wwwRoot string) (*dnsAdminServer, error) {
 	hashKey := securecookie.GenerateRandomKey(64)
 	if hashKey == nil {
 		return nil, errors.New("could not generate hash key")
@@ -456,7 +456,7 @@ func NewDnsAdminServer(root string) (*dnsAdminServer, error) {
 
 	server := &dnsAdminServer{
 		r:    mux.NewRouter(),
-		user: NewUserStorage(root, hashKey, blockKey),
+		user: NewUserStorage(dataRoot, hashKey, blockKey),
 	}
 	if err := server.LoadUsers(); err != nil {
 		return nil, err
@@ -470,6 +470,8 @@ func NewDnsAdminServer(root string) (*dnsAdminServer, error) {
 	s.HandleFunc("/domain/list", server.authenticateHandler(server.ListDomainsHandler)).Methods("GET")
 	s.HandleFunc("/slave/{domain}", server.authenticateHandler(server.AddSlaveHandler)).Methods("PUT")
 	s.HandleFunc("/slave/{domain}", server.authenticateHandler(server.DeleteSlaveHandler)).Methods("DELETE")
-
+	if wwwRoot != "" {
+		server.r.PathPrefix("/").Handler(http.FileServer(http.Dir(wwwRoot)))
+	}
 	return server, nil
 }

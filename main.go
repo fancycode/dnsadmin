@@ -28,6 +28,7 @@ import (
 func main() {
 	var help = flag.Bool("help", false, "show this help text")
 	var root = flag.String("data", "", "root folder to store data")
+	var www = flag.String("www", "", "folder containing website files to publish")
 	var address = flag.String("address", "127.0.0.1:8080", "address to listen on")
 	var logfile = flag.String("logfile", "", "logfile to write to (omit for stdout)")
 	flag.Parse()
@@ -50,7 +51,10 @@ func main() {
 	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds)
 
 	log.Printf("Using %s as data root", *root)
-	server, err := NewDnsAdminServer(*root)
+	if *www != "" {
+		log.Printf("Using %s as www root", *www)
+	}
+	server, err := NewDnsAdminServer(*root, *www)
 	if err != nil {
 		log.Fatal("could not create server", err)
 		return
