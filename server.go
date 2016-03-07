@@ -159,18 +159,28 @@ type dnsAdminServer struct {
 	delayer Delayer
 }
 
-func (s *dnsAdminServer) setHeaders(w http.ResponseWriter) {
+func (s *dnsAdminServer) setHeaders(w http.ResponseWriter, r *http.Request) {
+	host := r.Host
+	proto := r.Header.Get("X-Forwarded-Proto")
+	if proto == "" {
+		if r.TLS != nil {
+			proto = "https"
+		} else {
+			proto = "http"
+		}
+	}
 	if h := w.Header(); h != nil {
 		h.Set("Server", "dnsadmin")
 		h.Set("Content-Type", "application/json")
 		h.Set("Cache-Control", "priviate, max-age=0, no-cache")
 		h.Set("Pragma", "no-cache")
 		h.Set("Expires", "-1")
+		h.Set("Access-Control-Allow-Origin", proto+"://"+host)
 	}
 }
 
-func (s *dnsAdminServer) returnSuccess(w http.ResponseWriter, code int, content interface{}) {
-	s.setHeaders(w)
+func (s *dnsAdminServer) returnSuccess(w http.ResponseWriter, r *http.Request, code int, content interface{}) {
+	s.setHeaders(w, r)
 	w.WriteHeader(code)
 	e := json.NewEncoder(w)
 	e.Encode(map[string]interface{}{
@@ -179,8 +189,8 @@ func (s *dnsAdminServer) returnSuccess(w http.ResponseWriter, code int, content 
 	})
 }
 
-func (s *dnsAdminServer) returnError(w http.ResponseWriter, code int, content interface{}) {
-	s.setHeaders(w)
+func (s *dnsAdminServer) returnError(w http.ResponseWriter, r *http.Request, code int, content interface{}) {
+	s.setHeaders(w, r)
 	w.WriteHeader(code)
 	e := json.NewEncoder(w)
 	e.Encode(map[string]interface{}{
@@ -241,20 +251,20 @@ func (s *dnsAdminServer) getRemoteAddress(r *http.Request) string {
 
 func (s *dnsAdminServer) decodeBody(w http.ResponseWriter, r *http.Request, body interface{}) bool {
 	if r.ContentLength < 0 {
-		s.returnError(w, http.StatusLengthRequired, "length_required")
+		s.returnError(w, r, http.StatusLengthRequired, "length_required")
 		return false
 	} else if r.ContentLength > kMaxBodySize {
-		s.returnError(w, http.StatusRequestEntityTooLarge, "body_too_large")
+		s.returnError(w, r, http.StatusRequestEntityTooLarge, "body_too_large")
 		return false
 	}
 
 	decoder := json.NewDecoder(r.Body)
 	if err := decoder.Decode(&body); err != nil {
 		if err == io.EOF {
-			s.returnError(w, http.StatusBadRequest, "eof_while_decoding")
+			s.returnError(w, r, http.StatusBadRequest, "eof_while_decoding")
 		} else {
 			log.Printf("Decoding failed (%s)", err)
-			s.returnError(w, http.StatusBadRequest, "decoding_failed")
+			s.returnError(w, r, http.StatusBadRequest, "decoding_failed")
 		}
 		return false
 	}
@@ -266,7 +276,7 @@ func (s *dnsAdminServer) StatusHandler(w http.ResponseWriter, r *http.Request) {
 	if user, _ := s.user.Authenticate(r); user != nil {
 		w.Header().Set("X-dnsadmin-username", user.GetUsername())
 	}
-	s.returnSuccess(w, http.StatusOK, "ok")
+	s.returnSuccess(w, r, http.StatusOK, "ok")
 }
 
 func (s *dnsAdminServer) LoginHandler(w http.ResponseWriter, r *http.Request) {
@@ -278,20 +288,20 @@ func (s *dnsAdminServer) LoginHandler(w http.ResponseWriter, r *http.Request) {
 	username := body["username"]
 	password := body["password"]
 	if username == "" || password == "" {
-		s.returnError(w, http.StatusBadRequest, "username_password_required")
+		s.returnError(w, r, http.StatusBadRequest, "username_password_required")
 		return
 	}
 
 	remote := s.getRemoteAddress(r)
 	if s.delayer.IsDelayed(remote) {
 		log.Printf("Login currently delayed from %s", remote)
-		s.returnError(w, http.StatusForbidden, "login_delayed")
+		s.returnError(w, r, http.StatusForbidden, "login_delayed")
 		return
 	}
 
 	if s.delayer.IsDenied(remote) {
 		log.Printf("Login temporarily disabled from %s", remote)
-		s.returnError(w, http.StatusForbidden, "login_temporarily_disabled")
+		s.returnError(w, r, http.StatusForbidden, "login_temporarily_disabled")
 		return
 	}
 
@@ -299,20 +309,20 @@ func (s *dnsAdminServer) LoginHandler(w http.ResponseWriter, r *http.Request) {
 	if err != nil || user == nil {
 		s.delayer.DelayFailed(remote)
 		log.Printf("Login failed from %s", remote)
-		s.returnError(w, http.StatusForbidden, "login_failed")
+		s.returnError(w, r, http.StatusForbidden, "login_failed")
 		return
 	}
 
 	log.Printf("User %s logged in from %s", user.GetUsername(), remote)
 	s.user.SetCookie(w, r, user)
-	s.returnSuccess(w, http.StatusOK, "login_success")
+	s.returnSuccess(w, r, http.StatusOK, "login_success")
 }
 
 func (s *dnsAdminServer) LogoutHandler(w http.ResponseWriter, r *http.Request) {
 	cookie := createCookie(r, "")
 	cookie.MaxAge = -1
 	http.SetCookie(w, cookie)
-	s.returnSuccess(w, http.StatusOK, "logout_success")
+	s.returnSuccess(w, r, http.StatusOK, "logout_success")
 }
 
 func (s *dnsAdminServer) authenticateHandler(handler func(*user, http.ResponseWriter, *http.Request)) http.HandlerFunc {
@@ -320,13 +330,13 @@ func (s *dnsAdminServer) authenticateHandler(handler func(*user, http.ResponseWr
 		user, err := s.user.Authenticate(r)
 		if err != nil {
 			if err == http.ErrNoCookie {
-				s.returnError(w, http.StatusForbidden, "not_logged_in")
+				s.returnError(w, r, http.StatusForbidden, "not_logged_in")
 			} else {
-				s.returnError(w, http.StatusForbidden, "login_expired")
+				s.returnError(w, r, http.StatusForbidden, "login_expired")
 			}
 			return
 		} else if user == nil {
-			s.returnError(w, http.StatusNotFound, "unknown_user")
+			s.returnError(w, r, http.StatusNotFound, "unknown_user")
 			return
 		}
 
@@ -343,21 +353,21 @@ func (s *dnsAdminServer) ChangePasswordHandler(user *user, w http.ResponseWriter
 
 	password := body["password"]
 	if password != strings.TrimSpace(password) {
-		s.returnError(w, http.StatusNotAcceptable, "password_format_invalid")
+		s.returnError(w, r, http.StatusNotAcceptable, "password_format_invalid")
 		return
 	} else if len(password) < kMinPasswordLength {
-		s.returnError(w, http.StatusNotAcceptable, "password_too_short")
+		s.returnError(w, r, http.StatusNotAcceptable, "password_too_short")
 		return
 	}
 
 	if err := s.user.ChangePassword(user, password); err != nil {
-		s.returnError(w, http.StatusInternalServerError, err.Error())
+		s.returnError(w, r, http.StatusInternalServerError, err.Error())
 		return
 	}
 
 	log.Printf("User %s changed his password from %s", user.GetUsername(), s.getRemoteAddress(r))
 	s.user.SetCookie(w, r, user)
-	s.returnSuccess(w, http.StatusOK, "change_success")
+	s.returnSuccess(w, r, http.StatusOK, "change_success")
 }
 
 func (s *dnsAdminServer) ListDomainsHandler(user *user, w http.ResponseWriter, r *http.Request) {
@@ -365,14 +375,14 @@ func (s *dnsAdminServer) ListDomainsHandler(user *user, w http.ResponseWriter, r
 	if domains == nil {
 		domains = make(DomainList, 0)
 	}
-	s.returnSuccess(w, http.StatusOK, domains)
+	s.returnSuccess(w, r, http.StatusOK, domains)
 }
 
 func (s *dnsAdminServer) AddSlaveHandler(user *user, w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	domain := vars["domain"]
 	if domain == "" {
-		s.returnError(w, http.StatusNotFound, "empty_domain")
+		s.returnError(w, r, http.StatusNotFound, "empty_domain")
 		return
 	}
 
@@ -385,7 +395,7 @@ func (s *dnsAdminServer) AddSlaveHandler(user *user, w http.ResponseWriter, r *h
 	var added bool
 	var err error
 	if added, err = user.AddDomain(domain, kDomainTypeSlave, body.Master, false); err != nil {
-		s.returnError(w, http.StatusInternalServerError, err.Error())
+		s.returnError(w, r, http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -393,21 +403,21 @@ func (s *dnsAdminServer) AddSlaveHandler(user *user, w http.ResponseWriter, r *h
 		log.Printf("User %s added slave domain %s from %s", user.GetUsername(), domain, s.getRemoteAddress(r))
 		s.user.TriggerUpdateBindConfiguration()
 	}
-	s.returnSuccess(w, http.StatusOK, domain)
+	s.returnSuccess(w, r, http.StatusOK, domain)
 }
 
 func (s *dnsAdminServer) DeleteSlaveHandler(user *user, w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	domain := vars["domain"]
 	if domain == "" {
-		s.returnError(w, http.StatusNotFound, "empty_domain")
+		s.returnError(w, r, http.StatusNotFound, "empty_domain")
 		return
 	}
 
 	var deleted bool
 	var err error
 	if deleted, err = user.DeleteDomain(domain); err != nil {
-		s.returnError(w, http.StatusInternalServerError, err.Error())
+		s.returnError(w, r, http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -415,7 +425,7 @@ func (s *dnsAdminServer) DeleteSlaveHandler(user *user, w http.ResponseWriter, r
 		log.Printf("User %s removed slave domain %s from %s", user.GetUsername(), domain, s.getRemoteAddress(r))
 		s.user.TriggerUpdateBindConfiguration()
 	}
-	s.returnSuccess(w, http.StatusOK, domain)
+	s.returnSuccess(w, r, http.StatusOK, domain)
 }
 
 func (s *dnsAdminServer) LoadUsers() error {
