@@ -40,6 +40,19 @@ Response:
 - Sets a cookie that must be sent with all further requests.
 
 
+### POST /user/logout
+
+Remove authentication stored for user.
+
+Request:
+
+- none
+
+Response:
+
+- Expires cookie set by login endpoint.
+
+
 ### POST /user/change-password
 
 Update password for logged in user.
