@@ -145,12 +145,29 @@ func (d *Delayer) IsDelayed(key string) bool {
 	return d.activeDelays[key]
 }
 
-func createCookie(r *http.Request, value string) *http.Cookie {
-	return &http.Cookie{
-		Name:  kCookieName,
-		Value: value,
-		Path:  "/",
+func getProtocol(r *http.Request) string {
+	proto := r.Header.Get("X-Forwarded-Proto")
+	if proto == "" {
+		if r.TLS != nil {
+			proto = "https"
+		} else {
+			proto = "http"
+		}
 	}
+	return proto
+}
+
+func createCookie(r *http.Request, value string) *http.Cookie {
+	result := &http.Cookie{
+		Name:     kCookieName,
+		Value:    value,
+		Path:     "/",
+		HttpOnly: true,
+	}
+	if getProtocol(r) == "https" {
+		result.Secure = true
+	}
+	return result
 }
 
 type dnsAdminServer struct {
@@ -161,14 +178,7 @@ type dnsAdminServer struct {
 
 func (s *dnsAdminServer) setHeaders(w http.ResponseWriter, r *http.Request) {
 	host := r.Host
-	proto := r.Header.Get("X-Forwarded-Proto")
-	if proto == "" {
-		if r.TLS != nil {
-			proto = "https"
-		} else {
-			proto = "http"
-		}
-	}
+	proto := getProtocol(r)
 	if h := w.Header(); h != nil {
 		h.Set("Server", "dnsadmin")
 		h.Set("Content-Type", "application/json")
